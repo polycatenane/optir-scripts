@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-import argparse, json, re, shutil, sys, time
+import argparse
+import json
+import re
+import shutil
+import sys
+import time
 from pathlib import Path
 
-import pandas as pd
+import numpy as np
+from skimage import io
 
 try:
     import yaml  # optional
@@ -11,11 +17,11 @@ except ImportError:
 
 # ---------- CLI ----------
 parser = argparse.ArgumentParser(
-    description="Scale numeric values in CSVs using factors "
+    description="Scale numeric values in TIFF images using factors "
                 "looked up from keys embedded in file names."
 )
 parser.add_argument("targets", nargs="+",
-                    help="Files and/or directories to scan (recursively).")
+                    help="Directories whose top-level and immediate subdirectories will be scanned.")
 parser.add_argument("--dict", required=True,
                     help="JSON or YAML file whose contents map "
                          "'key' (number before invcm) -> scale factor.")
@@ -24,9 +30,8 @@ parser.add_argument("--op", choices=["mul", "div"], default="mul",
 parser.add_argument("--pattern",
                     default=r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*IR",
                     help="Regexp that captures the key from the file name.")
-parser.add_argument("--backup-suffix",
-                    default=time.strftime(".bak_%Y%m%d-%H%M%S"),
-                    help="Suffix appended to original file before overwriting.")
+parser.add_argument("--orig-dir", default="unscaled_tiffs",
+                    help="Directory name (inside each traversed directory) to move original TIFFs into. Set to '' to disable moving.")
 parser.add_argument("--contains", default="AC",
                     help="Only process files whose *name* contains this "
                          "substring (case-sensitive). Default: 'AC'")
@@ -58,30 +63,51 @@ def get_factor(fname: str) -> float:
         raise KeyError(f"Key '{key}' not found in mapping file")
     return float(SCALE_MAP[key])
 
-def scale_frame(df: pd.DataFrame, factor: float) -> pd.DataFrame:
-    num_cols = df.select_dtypes(include="number").columns
+def scale_image(img: np.ndarray, factor: float) -> np.ndarray:
+    """Scale numeric image ndarray and return float32 result."""
+    arr = img.astype(np.float32, copy=True)
     if args.op == "mul":
-        df[num_cols] = df[num_cols] * factor
+        arr = arr * factor
     else:
-        df[num_cols] = df[num_cols] / factor
-    return df
+        arr = arr / factor
+    return arr.astype(np.float32)
 
 def process(path: Path):
     factor = get_factor(path.name)
     print(f"{path}: factor={factor} ({'×' if args.op=='mul' else '÷'})")
-    df = pd.read_csv(path)
-    df = scale_frame(df, factor)
-    backup = path.with_suffix(path.suffix + args.backup_suffix)
-    shutil.copy2(path, backup)
-    df.to_csv(path, index=False)
+    img = io.imread(str(path))
+    scaled = scale_image(img, factor)
+    # Move original TIFF into per-directory archive if requested
+    if args.orig_dir:
+        dest_dir = path.parent / args.orig_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / path.name
+        # avoid overwrite at destination by adding timestamp if needed
+        if dest.exists():
+            suffix = time.strftime(".%Y%m%d-%H%M%S")
+            dest = dest.with_name(dest.stem + suffix + dest.suffix)
+        shutil.move(str(path), str(dest))
+        print(f"Moved original TIFF to {dest}")
+    # write scaled TIFF (float32)
+    io.imsave(str(path), scaled, check_contrast=False)
 
 # ---------- main ----------
 for t in args.targets:
     p = Path(t)
-    files = [p] if p.is_file() else p.rglob("*.csv")
+    files = []
+    if p.is_file():
+        files = [p]
+    elif p.is_dir():
+        # collect TIFFs in the directory itself (top-level)
+        files.extend(list(p.glob("*.tif")) + list(p.glob("*.tiff")))
+        # collect TIFFs in immediate subdirectories (one level deep)
+        for sd in (d for d in p.iterdir() if d.is_dir()):
+            files.extend(list(sd.glob("*.tif")) + list(sd.glob("*.tiff")))
+    else:
+        continue
     for f in files:
         if args.contains and args.contains not in f.name:
-            continue                    # <── filter by token
+            continue
         try:
             process(f)
         except Exception as e:
