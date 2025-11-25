@@ -24,6 +24,9 @@ def main():
     vals1 = read_values(args.tiff1)
     vals2 = read_values(args.tiff2)
 
+    combined_data = np.concatenate([vals1, vals2])
+    combined_bins = np.histogram_bin_edges(combined_data, bins='auto')  
+
     if vals1.size==0 and vals2.size==0:
         raise SystemExit("No values > threshold found in either file.")
 
@@ -31,7 +34,8 @@ def main():
     labels = ["Control", "AHA"]
 
     plt.figure(figsize=(8,6))
-    plt.hist([vals1, vals2], bins='auto', stacked=True, color=colors, label=labels, density=True, linewidth=0.5)
+    plt.hist(vals1, bins=combined_bins, color=colors[0], label=labels[0], density=True, linewidth=0.5)
+    plt.hist(vals2, bins=combined_bins, color=colors[1], label=labels[1], density=True, linewidth=0.5)
 
     plt.xlabel("Ratioed Intensity")
     plt.xlim(0, 0.7)
