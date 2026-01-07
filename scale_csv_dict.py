@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import csv
 import re
 import shutil
 import sys
@@ -24,11 +25,11 @@ parser.add_argument("targets", nargs="+",
                     help="Directories whose top-level and immediate subdirectories will be scanned.")
 parser.add_argument("--dict", required=True,
                     help="JSON or YAML file whose contents map "
-                         "'key' (number before invcm) -> scale factor.")
+                         "'key' (number before cm-1) -> scale factor.")
 parser.add_argument("--op", choices=["mul", "div"], default="mul",
                     help="mul = multiply by factor, div = divide by it.")
 parser.add_argument("--pattern",
-                    default=r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*IR",
+                    default=r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*cm-1",
                     help="Regexp that captures the key from the file name.")
 parser.add_argument("--orig-dir", default="unscaled_tiffs",
                     help="Directory name (inside each traversed directory) to move original TIFFs into. Set to '' to disable moving.")
@@ -43,13 +44,37 @@ if mapping_path.suffix.lower() in {".yaml", ".yml"}:
     if yaml is None:
         sys.exit("Install pyyaml or give a JSON file for --dict")
     with open(mapping_path, "rt") as f:
-        SCALE_MAP = yaml.safe_load(f)
+        raw_map = yaml.safe_load(f)
+elif mapping_path.suffix.lower() == ".csv":
+    raw_map = {}
+    with open(mapping_path, "rt", newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            if row[0].strip().startswith("#"):
+                continue
+            if len(row) < 2:
+                continue
+            k = row[0].strip()
+            v = row[1].strip()
+            raw_map[k] = v
 else:  # assume JSON
     with open(mapping_path, "rt") as f:
-        SCALE_MAP = json.load(f)
+        raw_map = json.load(f)
 
-# Normalize keys to string for flexible matching
-SCALE_MAP = {str(k): v for k, v in SCALE_MAP.items()}
+# Normalize keys to rounded integer strings and ensure values are floats
+SCALE_MAP = {}
+for k, v in raw_map.items():
+    try:
+        key_num = float(k)
+        key_norm = str(int(round(key_num)))
+    except Exception:
+        key_norm = str(k)
+    try:
+        SCALE_MAP[key_norm] = float(v)
+    except Exception:
+        SCALE_MAP[key_norm] = v
 
 regex = re.compile(args.pattern)
 
