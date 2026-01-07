@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from skimage import io
+import tifffile as tiff
 
 try:
     import yaml  # optional
@@ -75,7 +75,7 @@ def scale_image(img: np.ndarray, factor: float) -> np.ndarray:
 def process(path: Path):
     factor = get_factor(path.name)
     print(f"{path}: factor={factor} ({'×' if args.op=='mul' else '÷'})")
-    img = io.imread(str(path))
+    img = tiff.imread(str(path))
     scaled = scale_image(img, factor)
     # Move original TIFF into per-directory archive if requested
     if args.orig_dir:
@@ -89,7 +89,7 @@ def process(path: Path):
         shutil.move(str(path), str(dest))
         print(f"Moved original TIFF to {dest}")
     # write scaled TIFF (float32)
-    io.imsave(str(path), scaled, check_contrast=False)
+    tiff.imwrite(str(path), scaled.astype(np.float32))
 
 # ---------- main ----------
 for t in args.targets:

@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from skimage import io
+import tifffile as tiff
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert CSV image files to float32 TIFFs.")
@@ -35,7 +35,7 @@ def convert_file(path: Path, args):
         print(f"Skipping existing {out_path}; use --overwrite to replace")
         return
     # save float32 tiff
-    io.imsave(str(out_path), arr.astype(np.float32))
+    tiff.imwrite(str(out_path), arr.astype(np.float32))
     print(f"Wrote {out_path} (shape={arr.shape}, dtype=float32)")
     # move original CSV into per-directory archive
     if args.orig_dir:

@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 import numpy as np
-from skimage import io
+import tifffile as tiff
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -22,7 +22,7 @@ def parse_args():
 def read_tiff(path: Path) -> np.ndarray:
     if not path.exists():
         raise FileNotFoundError(str(path))
-    img = io.imread(str(path))
+    img = tiff.imread(str(path))
     return img.astype(np.float32, copy=False)
 
 def combine_arrays(a: np.ndarray, b: np.ndarray, op: str, allow_broadcast: bool) -> np.ndarray:
@@ -50,7 +50,7 @@ def main():
     except Exception as e:
         print(f"Failed combining arrays: {e}", file=sys.stderr)
         sys.exit(1)
-    io.imsave(str(out_path), res.astype(np.float32), check_contrast=False)
+    tiff.imwrite(str(out_path), res.astype(np.float32))
     print(f"Wrote {out_path} (shape={res.shape}, dtype=float32)")
 
 if __name__ == "__main__":
