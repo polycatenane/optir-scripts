@@ -22,11 +22,11 @@ parser = argparse.ArgumentParser(
                 "looked up from keys embedded in file names."
 )
 parser.add_argument("targets", nargs="+",
-                    help="Directories whose top-level and immediate subdirectories will be scanned.")
+                    help="Directories whose top-level will be scanned (no recursion into subdirectories).")
 parser.add_argument("--dict", required=True,
-                    help="JSON or YAML file whose contents map "
+                    help="JSON or CSV file whose contents map "
                          "'key' (number before cm-1) -> scale factor.")
-parser.add_argument("--op", choices=["mul", "div"], default="mul",
+parser.add_argument("--op", choices=["mul", "div"], default="div",
                     help="mul = multiply by factor, div = divide by it.")
 parser.add_argument("--pattern",
                     default=r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*cm-1",
@@ -123,11 +123,8 @@ for t in args.targets:
     if p.is_file():
         files = [p]
     elif p.is_dir():
-        # collect TIFFs in the directory itself (top-level)
+        # collect TIFFs in the directory itself (top-level only; do not recurse into subdirs)
         files.extend(list(p.glob("*.tif")) + list(p.glob("*.tiff")))
-        # collect TIFFs in immediate subdirectories (one level deep)
-        for sd in (d for d in p.iterdir() if d.is_dir()):
-            files.extend(list(sd.glob("*.tif")) + list(sd.glob("*.tiff")))
     else:
         continue
     for f in files:
