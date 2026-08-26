@@ -19,6 +19,13 @@ Usage:
       --legend-main "Average intensity" \
       --legend-extra "Experimental series"
 
+Layout options when extra series are present:
+  * Default: all series overlaid in the same axes (raw y scale).
+  * --stack-series: normalize each series to [0, 1] and vertically offset them
+    in a single axes (common x axis).
+  * --panel-series: normalize each series to [0, 1] and plot each series in its
+    own subplot panel (shared x axis).
+
 When multiple extra series are provided, pass one legend per series, e.g.:
   --extra-data a.txt --extra-data b.txt --legend-extra "A" "B"
 
@@ -60,6 +67,51 @@ def parse_args() -> argparse.Namespace:
         "hyperstack",
         type=Path,
         help="Path to hyperstack TIFF (e.g., /path/to/dir/hyperstack_AC.tif).",
+    )
+    parser.add_argument(
+        "--figsize",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("WIDTH", "HEIGHT"),
+        help=(
+            "Figure size in inches as two numbers: WIDTH HEIGHT. "
+            "If omitted, a default is chosen (and scaled for --panel-series)."
+        ),
+    )
+    parser.add_argument(
+        "--aspect",
+        type=float,
+        default=2,
+        help=(
+            "Figure aspect ratio (width/height). Ignored if --figsize is set. "
+            "Default: 2 (i.e., 8x4 inches)."
+        ),
+    )
+    parser.add_argument(
+        "--stack-series",
+        action="store_true",
+        help=(
+            "If set, normalize each series to [0, 1] and vertically stack them "
+            "(with offsets) in a single axes. Useful when plotting --extra-data."
+        ),
+    )
+    parser.add_argument(
+        "--panel-series",
+        action="store_true",
+        help=(
+            "If set, normalize each series to [0, 1] and plot each series as its own "
+            "subplot panel (shared x axis). Useful when plotting --extra-data."
+        ),
+    )
+    parser.add_argument(
+        "--stack-spacing",
+        type=float,
+        default=1.2,
+        help=(
+            "Vertical spacing between stacked series when using --stack-series. "
+            "Default: 1.2"
+        ),
     )
     parser.add_argument(
         "--extra-data",
@@ -128,6 +180,58 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def resolve_figsize(
+    *,
+    figsize_arg: tuple[float, float] | None,
+    aspect: float | None,
+    nrows: int,
+    ncols: int = 1,
+) -> tuple[float, float]:
+    """Resolve matplotlib figsize.
+
+    - If figsize_arg is provided, it is used as-is.
+    - Else a default height of 4 inches is used, width is derived from `aspect`
+      (or defaults to 1.5 => 6x4).
+    - For multi-row/col layouts, the total width/height is scaled by `ncols`/`nrows`.
+    """
+    if figsize_arg is not None:
+        w, h = float(figsize_arg[0]), float(figsize_arg[1])
+        return (w, h)
+
+    base_h = 4.0
+    a = 1.5 if aspect is None else float(aspect)
+    w = a * base_h * max(1, int(ncols))
+    h = base_h * max(1, int(nrows))
+    return (w, h)
+
+
+def layout_grid(n: int) -> tuple[int, int]:
+    """Pick (nrows, ncols) for n panels, preferring a wide layout.
+
+    Constraint: ncols >= nrows.
+    """
+    if n <= 0:
+        return (1, 1)
+
+    ncols = int(np.ceil(np.sqrt(n)))
+    nrows = int(np.ceil(n / ncols))
+    while ncols < nrows:
+        ncols += 1
+        nrows = int(np.ceil(n / ncols))
+    return (nrows, ncols)
+
+
+def normalize_01(y: np.ndarray) -> np.ndarray:
+    """Normalize a 1D series to [0, 1] (min-max)."""
+    y = np.asarray(y, dtype=float)
+    lo = float(np.min(y))
+    hi = float(np.max(y))
+    span = hi - lo
+    if span <= 0:
+        return np.zeros_like(y, dtype=float)
+    return (y - lo) / span
 
 
 def load_hyperstack(path: Path) -> np.ndarray:
@@ -234,6 +338,9 @@ def load_extra_series(path: Path, expected_len: int) -> np.ndarray:
 def main() -> None:
     args = parse_args()
 
+    if args.stack_series and args.panel_series:
+        raise SystemExit("Choose only one of --stack-series or --panel-series")
+
     hyperstack_path: Path = args.hyperstack
 
     if not hyperstack_path.is_file():
@@ -283,9 +390,11 @@ def main() -> None:
         output_path = hyperstack_path.with_name("avg_intensity_vs_wavenumber.png")
 
     # Plot
-    plt.figure(figsize=(6, 4))
     main_label = args.legend_main if args.legend_main is not None else hyperstack_path.stem
-    plt.plot(wavenumbers, frame_means, marker="o", label=main_label)
+
+    series: list[dict[str, object]] = [
+        {"label": main_label, "x": wavenumbers, "y": frame_means, "marker": "."}
+    ]
 
     # Optional extra series (may be provided multiple times)
     if args.extra_data:
@@ -356,11 +465,13 @@ def main() -> None:
             wavenumbers_extra = wavenumbers_extra_full[extra_mask]
             extra_means = extra_means[extra_mask]
 
-            plt.plot(
-                wavenumbers_extra,
-                extra_means,
-                marker="s",
-                label=label,
+            series.append(
+                {
+                    "label": label,
+                    "x": wavenumbers_extra,
+                    "y": extra_means,
+                    "marker": ".",
+                }
             )
         else:
             # Treat as a text-like numeric series
@@ -371,16 +482,82 @@ def main() -> None:
                 extra, airpls=args.airpls_baseline, asls=args.asls_baseline
             )
 
-            plt.plot(wavenumbers, extra, marker="s", label=label)
+            series.append(
+                {"label": label, "x": wavenumbers, "y": extra, "marker": "."}
+            )
 
-    plt.xlabel("Wavenumber (cm$^{-1}$)")
-    plt.ylabel("Average intensity per frame")
-    plt.title("Average intensity vs wavenumber")
-    plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
+    if args.panel_series:
+        n = len(series)
+        nrows, ncols = layout_grid(n)
+        figsize = resolve_figsize(
+            figsize_arg=args.figsize, aspect=args.aspect, nrows=nrows, ncols=ncols
+        )
+        fig, axes = plt.subplots(
+            nrows=nrows, ncols=ncols, sharex=True, figsize=figsize, squeeze=False
+        )
+        axes_flat = list(axes.ravel())
 
-    plt.savefig(output_path, dpi=300)
+        for ax, s in zip(axes_flat, series, strict=False):
+            x = np.asarray(s["x"], dtype=float)
+            y = normalize_01(np.asarray(s["y"], dtype=float))
+            marker = str(s["marker"])
+            label = str(s["label"])
+            ax.plot(x, y, marker=marker)
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_ylabel("Norm.")
+            ax.set_title(label, fontsize=10)
+            ax.grid(True, linestyle="--", alpha=0.5)
+
+        # Hide unused axes (if grid has more slots than series)
+        for ax in axes_flat[n:]:
+            ax.set_visible(False)
+
+        # Put x-label on bottom row only
+        for ax in axes[-1, :]:
+            if ax.get_visible():
+                ax.set_xlabel("Wavenumber (cm$^{-1}$)")
+        fig.suptitle("Average intensity vs wavenumber", y=0.995)
+        fig.tight_layout()
+        plot_fig = fig
+    else:
+        # Overlay (default) or stacked series in one axes
+        figsize = resolve_figsize(figsize_arg=args.figsize, aspect=args.aspect, nrows=1, ncols=1)
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if args.stack_series:
+            spacing = float(args.stack_spacing)
+            centers: list[float] = []
+            labels: list[str] = []
+            for idx, s in enumerate(series):
+                x = np.asarray(s["x"], dtype=float)
+                y = normalize_01(np.asarray(s["y"], dtype=float))
+                marker = str(s["marker"])
+                label = str(s["label"])
+                offset = idx * spacing
+                ax.plot(x, y + offset, marker=marker)
+                centers.append(offset + 0.5)
+                labels.append(label)
+
+            ax.set_ylabel("Normalized intensity (offset)")
+            ax.set_yticks(centers)
+            ax.set_yticklabels(labels)
+        else:
+            for s in series:
+                x = np.asarray(s["x"], dtype=float)
+                y = np.asarray(s["y"], dtype=float)
+                marker = str(s["marker"])
+                label = str(s["label"])
+                ax.plot(x, y, marker=marker, label=label)
+            ax.set_ylabel("Average intensity per frame")
+            ax.legend()
+
+        ax.set_xlabel("Wavenumber (cm$^{-1}$)")
+        ax.set_title("Average intensity vs wavenumber")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        fig.tight_layout()
+        plot_fig = fig
+
+    plot_fig.savefig(output_path, dpi=300)
 
     if not args.no_show:
         plt.show()
