@@ -1,3 +1,16 @@
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "accelerate>=1.14.0",
+#     "cellpose==3.1.1.3",
+#     "marimo>=0.23.3",
+#     "matplotlib>=3.11.1",
+#     "numpy>=2.5.2",
+#     "pandas==2.3.3",
+#     "scipy>=1.18.1",
+# ]
+# ///
+
 import marimo
 
 __generated_with = "0.24.0"
@@ -21,9 +34,8 @@ def _():
     from scipy.optimize import least_squares
 
     DATA_ROOT = Path(
-        "/run/media/nematicon/961F-D357/Experiment Data/Artificial Sweetener/"
-        "2026-08-25 and 2026-08-26"
-    )
+        "/var/home/praxis/Documents/Bai/Data/20260828 Artificial Sweetener"
+    ) / "2026-08-25 and 2026-08-26"
     DEFAULT_GROUPS = (
         "0 hour",
         "Control",
@@ -40,20 +52,19 @@ def _():
     MIN_SIGMA = MIN_FWHM / 2.354820045
     MAX_SIGMA = MAX_FWHM / 2.354820045
     return (
+        Accelerator,
         DATA_ROOT,
         DEFAULT_GROUPS,
         FORCED_PEAK_CENTERS,
         FORCED_PEAK_TOLERANCE,
         MAX_SIGMA,
         MIN_SIGMA,
-        Accelerator,
         defaultdict,
         least_squares,
-        models,
         mo,
+        models,
         np,
         pd,
-        plt,
         re,
         reduce,
         stats,
@@ -70,7 +81,7 @@ def _(np, pd, re):
 
 
     def parse_date(path):
-        match = re.match(r"(\d{8})_", path.name)
+        match = re.search(r"(?:^|_)(\d{8})(?:_|$)", path.stem)
         if match is None:
             raise ValueError(f"Cannot read acquisition date from {path.name}")
         return match.group(1)
@@ -209,7 +220,6 @@ def _(np, pd, re):
     return (
         align_to_ir_power,
         extract_label_spectra,
-        parse_date,
         read_ac_cube,
         read_ir_profiles,
         scan_ac_fovs,
@@ -217,7 +227,15 @@ def _(np, pd, re):
 
 
 @app.cell
-def _(FORCED_PEAK_CENTERS, FORCED_PEAK_TOLERANCE, MAX_SIGMA, MIN_SIGMA, least_squares, np, pd):
+def _(
+    FORCED_PEAK_CENTERS,
+    FORCED_PEAK_TOLERANCE,
+    MAX_SIGMA,
+    MIN_SIGMA,
+    least_squares,
+    np,
+    pd,
+):
     def gaussian(x, amplitude, center, sigma):
         return amplitude * np.exp(-0.5 * ((x - center) / sigma) ** 2)
 
@@ -338,7 +356,7 @@ def _(FORCED_PEAK_CENTERS, FORCED_PEAK_TOLERANCE, MAX_SIGMA, MIN_SIGMA, least_sq
         }
 
 
-    return fit_group_spectra, gaussian
+    return (fit_group_spectra,)
 
 
 @app.cell
@@ -566,11 +584,11 @@ def _(
         return wide, pd.DataFrame(tests)
 
 
-    return run_ac_analysis, summarize_ratios
+    return (run_ac_analysis,)
 
 
 @app.cell
-def _(DEFAULT_GROUPS, DATA_ROOT, mo):
+def _(DATA_ROOT, DEFAULT_GROUPS, mo):
     data_root = mo.ui.text(value=str(DATA_ROOT), label="AC data root")
     selected_groups = mo.ui.multiselect(
         options=list(DEFAULT_GROUPS), value=list(DEFAULT_GROUPS), label="Validated groups"
@@ -589,12 +607,11 @@ def _(DEFAULT_GROUPS, DATA_ROOT, mo):
     )
     run_button = mo.ui.run_button(label="Run AC analysis", kind="success")
     return (
+        cellprob_threshold,
         data_root,
         diameter,
         flow_threshold,
-        cellprob_threshold,
         model_type,
-        mo,
         run_button,
         segment_high,
         segment_low,
@@ -604,10 +621,10 @@ def _(DEFAULT_GROUPS, DATA_ROOT, mo):
 
 @app.cell
 def _(
+    cellprob_threshold,
     data_root,
     diameter,
     flow_threshold,
-    cellprob_threshold,
     mo,
     model_type,
     run_button,
@@ -627,7 +644,6 @@ def _(
             mo.md("Accelerate selects the runtime device only after **Run AC analysis** is clicked."),
         ]
     )
-    controls
     settings = {
         "data_root": __import__("pathlib").Path(data_root.value),
         "groups": tuple(selected_groups.value),
@@ -638,20 +654,22 @@ def _(
         "flow_threshold": float(flow_threshold.value),
         "cellprob_threshold": float(cellprob_threshold.value),
     }
-    return settings,
+    controls
+    return (settings,)
 
 
 @app.cell
 def _(run_ac_analysis, run_button, settings):
     analysis = run_ac_analysis(settings) if run_button.value else None
-    return analysis,
+    return (analysis,)
 
 
 @app.cell
-def _(analysis, mo, plt):
-    if analysis is None:
-        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation.")
-        return
+def _(analysis, mo, np, plt):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
     preview_count = min(4, len(analysis["previews"]))
     if preview_count:
         figure, axes = plt.subplots(1, preview_count, figsize=(5 * preview_count, 4), squeeze=False)
@@ -691,7 +709,6 @@ def _(analysis, mo, plt):
             analysis["p_values"],
         ]
     )
-    return
 
 
 if __name__ == "__main__":
