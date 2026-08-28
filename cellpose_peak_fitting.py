@@ -813,44 +813,107 @@ def _(DEFAULT_GROUPS, np, plt, re):
 @app.cell
 def _(
     analysis,
-    group_fit_figure,
     mo,
     ordered_analysis_groups,
     ordered_previews,
-    ratio_boxplot_figure,
-    segmentation_figure,
 ):
     mo.stop(
         analysis is None,
         mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
     )
-    gallery = [
-        mo.md(f"## Analysis device: `{analysis['device']}`"),
-        mo.md("### FOV status"),
-        analysis["fov_summary"],
-        mo.md("### Segmentation overlays"),
-        *[segmentation_figure(preview) for preview in ordered_previews(analysis["previews"])],
-        mo.md("### Mean spectra and Gaussian fits"),
-    ]
-    group_order = ordered_analysis_groups(analysis["groups"])
-    gallery.extend(
-        group_fit_figure(group_name, analysis["groups"][group_name])
-        for group_name in group_order
-        if group_name in analysis["groups"]
+    preview_count = len(ordered_previews(analysis["previews"]))
+    group_count = len(ordered_analysis_groups(analysis["groups"]))
+    view_mode = mo.ui.dropdown(
+        options=["Segmentation overlay", "Group fit", "Ratio distributions"],
+        value="Segmentation overlay",
+        label="Figure view",
     )
-    ratio_figure = ratio_boxplot_figure(analysis["ratios"])
-    gallery.extend(
+    fov_index = mo.ui.slider(
+        start=0,
+        stop=max(preview_count - 1, 0),
+        step=1,
+        value=0,
+        label=f"FOV index (0–{max(preview_count - 1, 0)})",
+    )
+    group_index = mo.ui.slider(
+        start=0,
+        stop=max(group_count - 1, 0),
+        step=1,
+        value=0,
+        label=f"Group index (0–{max(group_count - 1, 0)})",
+    )
+    browser_controls = mo.vstack(
         [
-            mo.md("### Cell-level ratio distributions"),
-            ratio_figure,
-            mo.md("### Cell-level peak fits"),
-            analysis["peaks"],
-            mo.md("### Ratio values and Carbon 13 Welch tests"),
-            analysis["ratios"],
+            mo.md("## Figure browser"),
+            view_mode,
+            fov_index,
+            group_index,
+            mo.md("The FOV slider applies to segmentation overlays; the group slider applies to group fits."),
+        ]
+    )
+    browser_controls
+    return fov_index, group_index, view_mode
+
+
+@app.cell
+def _(
+    analysis,
+    fov_index,
+    group_fit_figure,
+    group_index,
+    mo,
+    ordered_analysis_groups,
+    ordered_previews,
+    ratio_boxplot_figure,
+    segmentation_figure,
+    view_mode,
+):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    if view_mode.value == "Segmentation overlay":
+        previews = ordered_previews(analysis["previews"])
+        if previews:
+            index = min(max(int(fov_index.value), 0), len(previews) - 1)
+            figure = segmentation_figure(previews[index])
+            figure_label = f"Segmentation overlay: {previews[index]['fov']} ({index + 1}/{len(previews)})"
+        else:
+            figure = mo.md("No successful segmentation overlays are available.")
+            figure_label = "Segmentation overlay"
+    elif view_mode.value == "Group fit":
+        group_names = ordered_analysis_groups(analysis["groups"])
+        if group_names:
+            index = min(max(int(group_index.value), 0), len(group_names) - 1)
+            group_name = group_names[index]
+            figure = group_fit_figure(group_name, analysis["groups"][group_name])
+            figure_label = f"Group fit: {group_name} ({index + 1}/{len(group_names)})"
+        else:
+            figure = mo.md("No group fits are available.")
+            figure_label = "Group fit"
+    else:
+        figure = ratio_boxplot_figure(analysis["ratios"])
+        if figure is None:
+            figure = mo.md("No finite cell-level ratios are available.")
+        figure_label = "Cell-level ratio distributions"
+
+    peak_count = len(analysis["peaks"])
+    ratio_count = len(analysis["ratios"])
+    mo.vstack(
+        [
+            mo.md(f"## Analysis device: `{analysis['device']}`"),
+            mo.md(f"### {figure_label}"),
+            figure,
+            mo.md("### FOV status"),
+            analysis["fov_summary"],
+            mo.md(f"### Cell-level peak fits — showing {min(peak_count, 100)} of {peak_count} rows"),
+            analysis["peaks"].head(100),
+            mo.md(f"### Cell-level ratios — showing {min(ratio_count, 100)} of {ratio_count} rows"),
+            analysis["ratios"].head(100),
+            mo.md("### Carbon 13 Welch tests"),
             analysis["p_values"],
         ]
     )
-    mo.vstack(gallery)
 
 
 if __name__ == "__main__":
