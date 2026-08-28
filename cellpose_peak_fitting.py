@@ -65,6 +65,7 @@ def _():
         models,
         np,
         pd,
+        plt,
         re,
         reduce,
         stats,
@@ -665,43 +666,183 @@ def _(run_ac_analysis, run_button, settings):
 
 
 @app.cell
-def _(analysis, mo, np, plt):
-    mo.stop(
-        analysis is None,
-        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+def _(DEFAULT_GROUPS, np, plt, re):
+    RATIO_COLUMNS = (
+        "1612/(1530+1550)",
+        "1530/(1530+1550)",
+        "1612/(1612+1656)",
     )
-    preview_count = min(4, len(analysis["previews"]))
-    if preview_count:
-        figure, axes = plt.subplots(1, preview_count, figsize=(5 * preview_count, 4), squeeze=False)
-        for axis, preview in zip(axes[0], analysis["previews"][:preview_count]):
-            axis.imshow(preview["image"], cmap="gray")
-            overlay = np.ma.masked_where(preview["masks"] == 0, preview["masks"])
-            axis.imshow(overlay, cmap="nipy_spectral", alpha=0.35)
-            axis.set_title(preview["fov"])
-            axis.axis("off")
-        figure.tight_layout()
-    else:
-        figure = None
 
-    fit_figure = None
-    if analysis["groups"]:
-        group_name, group = next(iter(analysis["groups"].items()))
-        fit_figure, axis = plt.subplots(figsize=(9, 4.5))
-        axis.plot(group["x"], np.nanmean(group["spectra"], axis=0), color="black", label="Mean normalized AC")
-        axis.plot(group["x"], np.nanmean(group["fit_matrix"], axis=0), color="crimson", label="Mean Gaussian fit")
+    def group_sort_key(condition, time, group):
+        if condition == "0 hour":
+            return (0, 0, 0, group)
+        match = re.search(r"(\d+)", str(time))
+        time_order = int(match.group(1)) if match else 999
+        if condition == "Carbon 13":
+            condition_order = 0
+        else:
+            condition_order = DEFAULT_GROUPS.index(condition) + 1 if condition in DEFAULT_GROUPS else 999
+        return (1, time_order, condition_order, group)
+
+
+    def ordered_group_names(ratios):
+        if ratios.empty or not {"group", "condition", "time"}.issubset(ratios.columns):
+            return []
+        groups = ratios.loc[:, ["group", "condition", "time"]].drop_duplicates()
+        rows = groups.to_dict("records")
+        return [
+            row["group"]
+            for row in sorted(
+                rows,
+                key=lambda row: group_sort_key(row["condition"], row["time"], row["group"]),
+            )
+        ]
+
+
+    def ordered_analysis_groups(groups):
+        def key(group_name):
+            metadata = groups[group_name]["metadata"]
+            if metadata.empty:
+                return (999, 999, 999, group_name)
+            row = metadata.iloc[0]
+            return group_sort_key(row["condition"], row["time"], group_name)
+
+        return sorted(groups, key=key)
+
+
+    def ordered_previews(previews):
+        def key(preview):
+            parts = preview["fov"].split("/")
+            condition = parts[0]
+            time = parts[1] if len(parts) > 1 else None
+            return group_sort_key(condition, time, preview["fov"])
+
+        return sorted(previews, key=key)
+
+
+    def segmentation_figure(preview):
+        figure, axis = plt.subplots(figsize=(6, 5))
+        axis.imshow(preview["image"], cmap="gray")
+        overlay = np.ma.masked_where(preview["masks"] == 0, preview["masks"])
+        axis.imshow(overlay, cmap="nipy_spectral", alpha=0.35)
+        axis.set_title(preview["fov"])
+        axis.axis("off")
+        figure.tight_layout()
+        return figure
+
+
+    def group_fit_figure(group_name, group):
+        figure, axis = plt.subplots(figsize=(9, 4.5))
+        axis.plot(
+            group["x"],
+            np.nanmean(group["spectra"], axis=0),
+            color="black",
+            label="Mean normalized AC",
+        )
+        axis.plot(
+            group["x"],
+            np.nanmean(group["fit_matrix"], axis=0),
+            color="crimson",
+            label="Mean Gaussian fit",
+        )
         axis.set_title(group_name)
         axis.set_xlabel("Wavenumber (cm-1)")
         axis.set_ylabel("Normalized intensity")
         axis.legend()
-        fit_figure.tight_layout()
+        figure.tight_layout()
+        return figure
 
-    mo.vstack(
+
+    def ratio_boxplot_figure(ratios):
+        if ratios.empty:
+            return None
+        group_names = ordered_group_names(ratios)
+        figure, axes = plt.subplots(
+            nrows=len(RATIO_COLUMNS),
+            ncols=1,
+            figsize=(max(9, 1.65 * len(group_names)), 4 * len(RATIO_COLUMNS)),
+            squeeze=False,
+        )
+        for axis, ratio_name in zip(axes[:, 0], RATIO_COLUMNS, strict=True):
+            series = []
+            labels = []
+            for group_name in group_names:
+                values = (
+                    ratios.loc[ratios["group"] == group_name, ratio_name]
+                    .replace([np.inf, -np.inf], np.nan)
+                    .dropna()
+                    .to_numpy(dtype=float)
+                )
+                if values.size:
+                    series.append(values)
+                    labels.append(group_name)
+            if not series:
+                axis.set_title(f"{ratio_name} (no finite cell values)")
+                axis.axis("off")
+                continue
+            positions = np.arange(1, len(series) + 1)
+            axis.boxplot(series, positions=positions, showfliers=False, patch_artist=True)
+            for position, values in zip(positions, series, strict=True):
+                jitter = (
+                    np.array([float(position)])
+                    if values.size == 1
+                    else position + np.linspace(-0.18, 0.18, num=values.size)
+                )
+                axis.scatter(jitter, values, s=12, alpha=0.55, linewidths=0, zorder=3)
+            axis.set_title(ratio_name)
+            axis.set_ylabel("Cell-level ratio")
+            axis.set_xticks(positions)
+            axis.set_xticklabels(labels, rotation=45, ha="right")
+            axis.grid(True, axis="y", alpha=0.25)
+            if ratio_name != "1612/(1530+1550)":
+                axis.set_ylim(0, 1)
+        figure.tight_layout()
+        return figure
+
+
+    return (
+        group_fit_figure,
+        ordered_analysis_groups,
+        ordered_group_names,
+        ordered_previews,
+        ratio_boxplot_figure,
+        segmentation_figure,
+    )
+
+
+@app.cell
+def _(
+    analysis,
+    group_fit_figure,
+    mo,
+    ordered_analysis_groups,
+    ordered_previews,
+    ratio_boxplot_figure,
+    segmentation_figure,
+):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    gallery = [
+        mo.md(f"## Analysis device: `{analysis['device']}`"),
+        mo.md("### FOV status"),
+        analysis["fov_summary"],
+        mo.md("### Segmentation overlays"),
+        *[segmentation_figure(preview) for preview in ordered_previews(analysis["previews"])],
+        mo.md("### Mean spectra and Gaussian fits"),
+    ]
+    group_order = ordered_analysis_groups(analysis["groups"])
+    gallery.extend(
+        group_fit_figure(group_name, analysis["groups"][group_name])
+        for group_name in group_order
+        if group_name in analysis["groups"]
+    )
+    ratio_figure = ratio_boxplot_figure(analysis["ratios"])
+    gallery.extend(
         [
-            mo.md(f"## Analysis device: `{analysis['device']}`"),
-            mo.md("### FOV status"),
-            analysis["fov_summary"],
-            figure,
-            fit_figure,
+            mo.md("### Cell-level ratio distributions"),
+            ratio_figure,
             mo.md("### Cell-level peak fits"),
             analysis["peaks"],
             mo.md("### Ratio values and Carbon 13 Welch tests"),
@@ -709,6 +850,7 @@ def _(analysis, mo, np, plt):
             analysis["p_values"],
         ]
     )
+    mo.vstack(gallery)
 
 
 if __name__ == "__main__":
