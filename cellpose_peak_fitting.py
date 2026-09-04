@@ -667,12 +667,6 @@ def _(run_ac_analysis, run_button, settings):
 
 @app.cell
 def _(DEFAULT_GROUPS, np, plt, re):
-    RATIO_COLUMNS = (
-        "1612/(1530+1550)",
-        "1530/(1530+1550)",
-        "1612/(1612+1656)",
-    )
-
     def group_sort_key(condition, time, group):
         if condition == "0 hour":
             return (0, 0, 0, group)
@@ -753,49 +747,42 @@ def _(DEFAULT_GROUPS, np, plt, re):
         return figure
 
 
-    def ratio_boxplot_figure(ratios):
-        if ratios.empty:
+    def ratio_boxplot_figure(ratios, ratio_name):
+        if ratios.empty or ratio_name not in ratios.columns:
             return None
         group_names = ordered_group_names(ratios)
-        figure, axes = plt.subplots(
-            nrows=len(RATIO_COLUMNS),
-            ncols=1,
-            figsize=(max(9, 1.65 * len(group_names)), 4 * len(RATIO_COLUMNS)),
-            squeeze=False,
-        )
-        for axis, ratio_name in zip(axes[:, 0], RATIO_COLUMNS, strict=True):
-            series = []
-            labels = []
-            for group_name in group_names:
-                values = (
-                    ratios.loc[ratios["group"] == group_name, ratio_name]
-                    .replace([np.inf, -np.inf], np.nan)
-                    .dropna()
-                    .to_numpy(dtype=float)
-                )
-                if values.size:
-                    series.append(values)
-                    labels.append(group_name)
-            if not series:
-                axis.set_title(f"{ratio_name} (no finite cell values)")
-                axis.axis("off")
-                continue
-            positions = np.arange(1, len(series) + 1)
-            axis.boxplot(series, positions=positions, showfliers=False, patch_artist=True)
-            for position, values in zip(positions, series, strict=True):
-                jitter = (
-                    np.array([float(position)])
-                    if values.size == 1
-                    else position + np.linspace(-0.18, 0.18, num=values.size)
-                )
-                axis.scatter(jitter, values, s=12, alpha=0.55, linewidths=0, zorder=3)
-            axis.set_title(ratio_name)
-            axis.set_ylabel("Cell-level ratio")
-            axis.set_xticks(positions)
-            axis.set_xticklabels(labels, rotation=45, ha="right")
-            axis.grid(True, axis="y", alpha=0.25)
-            if ratio_name != "1612/(1530+1550)":
-                axis.set_ylim(0, 1)
+        figure, axis = plt.subplots(figsize=(max(9, 1.65 * len(group_names)), 5))
+        series = []
+        labels = []
+        for group_name in group_names:
+            values = (
+                ratios.loc[ratios["group"] == group_name, ratio_name]
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+                .to_numpy(dtype=float)
+            )
+            if values.size:
+                series.append(values)
+                labels.append(group_name)
+        if not series:
+            plt.close(figure)
+            return None
+        positions = np.arange(1, len(series) + 1)
+        axis.boxplot(series, positions=positions, showfliers=False, patch_artist=True)
+        for position, values in zip(positions, series, strict=True):
+            jitter = (
+                np.array([float(position)])
+                if values.size == 1
+                else position + np.linspace(-0.18, 0.18, num=values.size)
+            )
+            axis.scatter(jitter, values, s=12, alpha=0.55, linewidths=0, zorder=3)
+        axis.set_title(ratio_name)
+        axis.set_ylabel("Cell-level ratio")
+        axis.set_xticks(positions)
+        axis.set_xticklabels(labels, rotation=45, ha="right")
+        axis.grid(True, axis="y", alpha=0.25)
+        if ratio_name != "1612/(1530+1550)":
+            axis.set_ylim(0, 1)
         figure.tight_layout()
         return figure
 
@@ -823,11 +810,6 @@ def _(
     )
     preview_count = len(ordered_previews(analysis["previews"]))
     group_count = len(ordered_analysis_groups(analysis["groups"]))
-    view_mode = mo.ui.dropdown(
-        options=["Segmentation overlay", "Group fit", "Ratio distributions"],
-        value="Segmentation overlay",
-        label="Figure view",
-    )
     fov_index = mo.ui.slider(
         start=0,
         stop=max(preview_count - 1, 0),
@@ -844,71 +826,168 @@ def _(
     )
     browser_controls = mo.vstack(
         [
-            mo.md("## Figure browser"),
-            view_mode,
+            mo.md("## Figure controls"),
             fov_index,
             group_index,
-            mo.md("The FOV slider applies to segmentation overlays; the group slider applies to group fits."),
+            mo.md("The FOV slider controls the segmentation overlay below; the group slider controls the fit figure below."),
         ]
     )
     browser_controls
-    return fov_index, group_index, view_mode
+    return fov_index, group_index
 
 
 @app.cell
 def _(
     analysis,
     fov_index,
-    group_fit_figure,
-    group_index,
     mo,
-    ordered_analysis_groups,
     ordered_previews,
-    ratio_boxplot_figure,
     segmentation_figure,
-    view_mode,
 ):
     mo.stop(
         analysis is None,
         mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
     )
-    if view_mode.value == "Segmentation overlay":
-        previews = ordered_previews(analysis["previews"])
-        if previews:
-            index = min(max(int(fov_index.value), 0), len(previews) - 1)
-            figure = segmentation_figure(previews[index])
-            figure_label = f"Segmentation overlay: {previews[index]['fov']} ({index + 1}/{len(previews)})"
-        else:
-            figure = mo.md("No successful segmentation overlays are available.")
-            figure_label = "Segmentation overlay"
-    elif view_mode.value == "Group fit":
-        group_names = ordered_analysis_groups(analysis["groups"])
-        if group_names:
-            index = min(max(int(group_index.value), 0), len(group_names) - 1)
-            group_name = group_names[index]
-            figure = group_fit_figure(group_name, analysis["groups"][group_name])
-            figure_label = f"Group fit: {group_name} ({index + 1}/{len(group_names)})"
-        else:
-            figure = mo.md("No group fits are available.")
-            figure_label = "Group fit"
+    selected_previews = ordered_previews(analysis["previews"])
+    if not selected_previews:
+        segmentation_output = mo.md("## Segmentation overlay\n\nNo successful segmentation overlays are available.")
     else:
-        figure = ratio_boxplot_figure(analysis["ratios"])
-        if figure is None:
-            figure = mo.md("No finite cell-level ratios are available.")
-        figure_label = "Cell-level ratio distributions"
+        selected_fov_index = min(max(int(fov_index.value), 0), len(selected_previews) - 1)
+        selected_preview = selected_previews[selected_fov_index]
+        selected_segmentation_figure = segmentation_figure(selected_preview)
+        segmentation_output = mo.vstack(
+            [
+                mo.md(
+                    f"## Segmentation overlay\n\n"
+                    f"{selected_preview['fov']} ({selected_fov_index + 1}/{len(selected_previews)})"
+                ),
+                mo.mpl.interactive(selected_segmentation_figure),
+            ]
+        )
+    segmentation_output
 
-    peak_count = len(analysis["peaks"])
-    ratio_count = len(analysis["ratios"])
+
+@app.cell
+def _(
+    analysis,
+    group_fit_figure,
+    group_index,
+    mo,
+    ordered_analysis_groups,
+):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    selected_group_names = ordered_analysis_groups(analysis["groups"])
+    if not selected_group_names:
+        group_fit_output = mo.md("## Group fit\n\nNo group fits are available.")
+    else:
+        selected_group_index = min(max(int(group_index.value), 0), len(selected_group_names) - 1)
+        selected_group_name = selected_group_names[selected_group_index]
+        selected_group_fit_figure = group_fit_figure(
+            selected_group_name,
+            analysis["groups"][selected_group_name],
+        )
+        group_fit_output = mo.vstack(
+            [
+                mo.md(
+                    f"## Group fit\n\n"
+                    f"{selected_group_name} ({selected_group_index + 1}/{len(selected_group_names)})"
+                ),
+                mo.mpl.interactive(selected_group_fit_figure),
+            ]
+        )
+    group_fit_output
+
+
+@app.cell
+def _(analysis, mo, ratio_boxplot_figure):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    ratio_1612_1530_1550_name = "1612/(1530+1550)"
+    ratio_1612_1530_1550_figure = ratio_boxplot_figure(
+        analysis["ratios"], ratio_1612_1530_1550_name
+    )
+    ratio_1612_1530_1550_output = (
+        mo.md(f"## {ratio_1612_1530_1550_name}\n\nNo finite cell-level ratios are available.")
+        if ratio_1612_1530_1550_figure is None
+        else mo.vstack(
+            [
+                mo.md(f"## Condition comparison: {ratio_1612_1530_1550_name}"),
+                mo.mpl.interactive(ratio_1612_1530_1550_figure),
+            ]
+        )
+    )
+    ratio_1612_1530_1550_output
+
+
+@app.cell
+def _(analysis, mo, ratio_boxplot_figure):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    ratio_1530_1530_1550_name = "1530/(1530+1550)"
+    ratio_1530_1530_1550_figure = ratio_boxplot_figure(
+        analysis["ratios"], ratio_1530_1530_1550_name
+    )
+    ratio_1530_1530_1550_output = (
+        mo.md(f"## {ratio_1530_1530_1550_name}\n\nNo finite cell-level ratios are available.")
+        if ratio_1530_1530_1550_figure is None
+        else mo.vstack(
+            [
+                mo.md(f"## Condition comparison: {ratio_1530_1530_1550_name}"),
+                mo.mpl.interactive(ratio_1530_1530_1550_figure),
+            ]
+        )
+    )
+    ratio_1530_1530_1550_output
+
+
+@app.cell
+def _(analysis, mo, ratio_boxplot_figure):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    ratio_1612_1612_1656_name = "1612/(1612+1656)"
+    ratio_1612_1612_1656_figure = ratio_boxplot_figure(
+        analysis["ratios"], ratio_1612_1612_1656_name
+    )
+    ratio_1612_1612_1656_output = (
+        mo.md(f"## {ratio_1612_1612_1656_name}\n\nNo finite cell-level ratios are available.")
+        if ratio_1612_1612_1656_figure is None
+        else mo.vstack(
+            [
+                mo.md(f"## Condition comparison: {ratio_1612_1612_1656_name}"),
+                mo.mpl.interactive(ratio_1612_1612_1656_figure),
+            ]
+        )
+    )
+    ratio_1612_1612_1656_output
+
+
+@app.cell
+def _(analysis, mo):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    table_peak_count = len(analysis["peaks"])
+    table_ratio_count = len(analysis["ratios"])
     mo.vstack(
         [
-            mo.md(f"## Analysis device: `{analysis['device']}`"),
-            mo.md(f"### {figure_label}"),
-            figure,
+            mo.md(f"## Analysis tables\n\nRuntime device: `{analysis['device']}`"),
             mo.md("### FOV status"),
             analysis["fov_summary"],
-            mo.md(f"### Cell-level peak fits — showing {min(peak_count, 100)} of {peak_count} rows"),
+            mo.md(
+                f"### Cell-level peak fits — showing {min(table_peak_count, 100)} of {table_peak_count} rows"
+            ),
             analysis["peaks"].head(100),
-            mo.md(f"### Cell-level ratios — showing {min(ratio_count, 100)} of {ratio_count} rows"),
+            mo.md(f"### Cell-level ratios — showing {min(table_ratio_count, 100)} of {table_ratio_count} rows"),
             analysis["ratios"].head(100),
             mo.md("### Carbon 13 Welch tests"),
             analysis["p_values"],
