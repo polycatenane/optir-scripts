@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -6,16 +8,37 @@ from hyperspectral_cells import input
 
 
 def test_parse_metadata_and_group_details(tmp_path):
-    path = tmp_path / "Control" / "2 hour" / "FOV3" / "20260825_1612cm-1_scan_AC.csv"
+    path = tmp_path / "Control" / "2 hour" / "FOV3" / "20260825_step150nmDwell20us400by400pts_1612cm-1_scan_AC.csv"
     path.parent.mkdir(parents=True)
 
     assert input.parse_wavenumber(path) == 1612.0
     assert input.parse_date(path) == "20260825"
+    assert input.parse_pixel_size_um(path) == 0.15
     assert input.group_details(tmp_path, path.parent) == {
         "group": "Control / 2 hour",
         "condition": "Control",
         "time": "2 hour",
     }
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("20260825_step150nmDwell20us400by400pts_1612cm-1_scan_AC.csv", 0.15),
+        ("20260825_STEP200NMDwell20us400by400pts_1612cm-1_scan_AC.csv", 0.2),
+    ],
+)
+def test_parse_pixel_size_um(filename, expected):
+    assert input.parse_pixel_size_um(Path(filename)) == expected
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["20260825_1612cm-1_scan_AC.csv", "20260825_step0nm_1612cm-1_scan_AC.csv"],
+)
+def test_parse_pixel_size_um_rejects_missing_or_invalid_metadata(filename):
+    with pytest.raises(ValueError, match="Cannot read pixel size"):
+        input.parse_pixel_size_um(Path(filename))
 
 
 def test_read_ac_cube_sorts_planes_and_rejects_inconsistent_shapes(tmp_path):

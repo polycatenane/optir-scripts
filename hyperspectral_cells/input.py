@@ -19,6 +19,17 @@ def parse_date(path: Path) -> str:
     return match.group(1)
 
 
+def parse_pixel_size_um(path: Path) -> float:
+    match = re.search(
+        r"(?:^|_)step(\d+(?:\.\d+)?)nm(?=Dwell|_|$)",
+        path.stem,
+        flags=re.IGNORECASE,
+    )
+    if match is None or float(match.group(1)) <= 0:
+        raise ValueError(f"Cannot read pixel size from {path.name}")
+    return float(match.group(1)) / 1_000
+
+
 def group_details(root: Path, fov_dir: Path) -> dict[str, str | None]:
     parts = list(fov_dir.relative_to(root).parts)
     if parts and re.fullmatch(r"FOV\d+", parts[-1], flags=re.IGNORECASE):
