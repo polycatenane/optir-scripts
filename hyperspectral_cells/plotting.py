@@ -14,6 +14,14 @@ CONDITIONS = (
     "Sucralose",
 )
 DEFAULT_GROUPS = ("0 hour", *CONDITIONS)
+CONDITION_COLORS = {
+    "0 hour": "C0",
+    **{condition: f"C{index}" for index, condition in enumerate(CONDITIONS)},
+}
+
+
+def condition_color(condition):
+    return CONDITION_COLORS.get(condition, "C7")
 
 
 def hour_value(label: object) -> float | None:
@@ -49,16 +57,16 @@ def ratio_over_time_figure(ratios: pd.DataFrame, ratio_name: str):
             counts.append(count)
             if not count:
                 continue
-            sem = samples.sem() if count > 1 else np.nan
-            summaries.append((hour, samples.mean(), sem))
+            standard_deviation = samples.std(ddof=1) if count > 1 else np.nan
+            summaries.append((hour, samples.mean(), standard_deviation))
         if not summaries:
             continue
         plotted = True
-        x, mean, sem = (np.asarray(values) for values in zip(*summaries, strict=True))
+        x, mean, standard_deviation = (np.asarray(values) for values in zip(*summaries, strict=True))
         axis.errorbar(
             x,
             mean,
-            yerr=sem,
+            yerr=standard_deviation,
             marker="o",
             capsize=3,
             label=f"{condition} (n={'/'.join(map(str, counts))})",
@@ -177,6 +185,51 @@ def stacked_spectra_figure(groups, selected_hour):
     return figure
 
 
+def stacked_spectra_standard_deviation_figure(groups, selected_hour):
+    selected_group_names = [
+        group_name
+        for group_name in ordered_analysis_groups(groups)
+        if selected_hour in groups[group_name]["metadata"]["time"].unique()
+    ]
+    if not selected_group_names:
+        return None
+    figure, axis = plt.subplots(figsize=(10, max(4.5, 1.6 * len(selected_group_names))))
+    offsets = []
+    labels = []
+    for index, group_name in enumerate(selected_group_names):
+        group = groups[group_name]
+        spectra = group["spectra"]
+        offset = 1.1 * index
+        mean = np.nanmean(spectra, axis=0)
+        condition = group["metadata"]["condition"].iloc[0]
+        color = condition_color(condition)
+        axis.plot(
+            group["x"],
+            mean + offset,
+            color=color,
+            label="Mean normalized AC" if index == 0 else None,
+        )
+        if spectra.shape[0] > 1:
+            standard_deviation = np.nanstd(spectra, axis=0, ddof=1)
+            axis.fill_between(
+                group["x"],
+                mean - standard_deviation + offset,
+                mean + standard_deviation + offset,
+                color=color,
+                alpha=0.2,
+                label="Mean +/- SD" if index == 0 else None,
+            )
+        offsets.append(offset + 0.5)
+        labels.append(f"{condition} (n={spectra.shape[0]})")
+    axis.set_title(f"Mean normalized AC spectra with SD ({selected_hour})")
+    axis.set_xlabel("Wavenumber (cm-1)")
+    axis.set_ylabel("Normalized intensity (offset by condition)")
+    axis.set_yticks(offsets, labels)
+    axis.legend()
+    figure.tight_layout()
+    return figure
+
+
 def ratio_boxplot_figure(ratios, ratio_name, selected_hour):
     if ratios.empty or ratio_name not in ratios.columns:
         return None
@@ -196,10 +249,21 @@ def ratio_boxplot_figure(ratios, ratio_name, selected_hour):
         plt.close(figure)
         return None
     positions = np.arange(1, len(series) + 1)
-    axis.boxplot(series, positions=positions, showfliers=False, patch_artist=True)
-    for position, values in zip(positions, series, strict=True):
+    boxplot = axis.boxplot(series, positions=positions, showfliers=False, patch_artist=True)
+    for patch, label in zip(boxplot["boxes"], labels, strict=True):
+        patch.set_facecolor(condition_color(label))
+        patch.set_alpha(0.35)
+    for position, values, label in zip(positions, series, labels, strict=True):
         jitter = np.array([float(position)]) if values.size == 1 else position + np.linspace(-0.18, 0.18, num=values.size)
-        axis.scatter(jitter, values, s=12, alpha=0.55, linewidths=0, zorder=3)
+        axis.scatter(
+            jitter,
+            values,
+            s=12,
+            alpha=0.55,
+            color=condition_color(label),
+            linewidths=0,
+            zorder=3,
+        )
     axis.set_title(f"{ratio_name} ({selected_hour})")
     axis.set_ylabel("Cell-level ratio")
     axis.set_xticks(positions)

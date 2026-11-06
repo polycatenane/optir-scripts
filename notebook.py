@@ -528,6 +528,32 @@ def _(analysis, hour_dropdown, mo, plotting):
 
 
 @app.cell(hide_code=True)
+def _(analysis, hour_dropdown, mo, plotting):
+    mo.stop(
+        analysis is None,
+        mo.md("Configure the analysis and click **Run AC analysis** to begin segmentation."),
+    )
+    _selected_hour = hour_dropdown.value
+    _selected_spectra_standard_deviation_figure = plotting.stacked_spectra_standard_deviation_figure(
+        analysis["groups"], _selected_hour
+    )
+    if _selected_spectra_standard_deviation_figure is None:
+        _spectra_standard_deviation_output = mo.md(
+            f"## Stacked spectra with SD ({_selected_hour})\n\n"
+            "No fitted spectra are available for this time point."
+        )
+    else:
+        _spectra_standard_deviation_output = mo.vstack(
+            [
+                mo.md(f"## Stacked spectra with SD ({_selected_hour})"),
+                mo.mpl.interactive(_selected_spectra_standard_deviation_figure),
+            ]
+        )
+    _spectra_standard_deviation_output
+    return
+
+
+@app.cell(hide_code=True)
 def _(analysis, hour_dropdown, mo, plotting, ratio_dropdown):
     mo.stop(
         analysis is None,
